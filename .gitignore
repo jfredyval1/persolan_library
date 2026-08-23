@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+# ficheros auxiliares que SQLite crea junto al GeoPackage en modo WAL
+*.gpkg-wal
+*.gpkg-shm
+# Excluir el gpkg
+*.gpkg
