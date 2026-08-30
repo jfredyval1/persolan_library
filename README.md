@@ -7,7 +7,7 @@ de alta a partir del ISBN, para no escribir un `INSERT` por libro.
 ```
 sql/     esquema del GeoPackage y semillas (países con geometría, Dewey)
 api/     API FastAPI: CRUD, alta por ISBN, importación en lote
-tests/   27 pruebas de esquema y de alta por ISBN, sin red
+tests/   30 pruebas de esquema y de alta por ISBN, sin red
 ```
 
 ---
@@ -17,11 +17,17 @@ tests/   27 pruebas de esquema y de alta por ISBN, sin red
 El trabajo manual de catalogar no está en el `INSERT`, sino en teclear título,
 autor, editorial, año y páginas de cada libro. La API lo resuelve así:
 
-**Alta por ISBN.** `POST /libros/desde-isbn` consulta Open Library — y Google
-Books si allí no aparece —, crea el libro y **crea o reutiliza el autor y la
-editorial**, resolviendo las tablas puente. Si le indicas un casillero, añade
-también el ejemplar. `GET /lookup/{isbn}` hace lo mismo sin guardar nada, para
-mirar la ficha antes de decidir.
+**Alta por ISBN, con dos fuentes.** `POST /libros/desde-isbn` consulta Open
+Library y, si allí no aparece, **Google Books**. Crea el libro y **crea o
+reutiliza el autor y la editorial**, resolviendo las tablas puente. Si le
+indicas un casillero, añade también el ejemplar. `GET /lookup/{isbn}` hace lo
+mismo sin guardar nada, para mirar la ficha antes de decidir.
+
+Que sean dos no es un adorno: en la primera carga real de este catálogo —14
+libros de editoriales colombianas, mexicanas, chilenas y españolas— Open
+Library solo conocía **4 de 14**. Los otros 8 los encontró Google Books. Ahora
+bien, esa segunda fuente **exige clave** y falla de forma intermitente; ambas
+cosas están resueltas y explicadas en la [nota 8](#notas-importantes).
 
 **Importación en lote.** Una lista de ISBNs (`POST /importar/isbns`) o un CSV
 (`POST /importar/csv`), que además admite filas sin ISBN para los libros que
@@ -129,6 +135,21 @@ usando la API y cuántos libros lleva.
 | `BIBLIOTECA_GPKG` | `sql/gpkg/biblioteca.gpkg` | Ruta del GeoPackage. Útil para probar sobre una copia. |
 | `BIBLIOTECA_API_KEY` | *(sin definir)* | Clave de escritura. **Sin ella la API arranca en solo lectura** y toda escritura responde 503. |
 | `BIBLIOTECA_PAUSA_LOTE` | `0.5` | Segundos entre consultas externas durante una importación. |
+| `GOOGLE_API_KEY` | *(sin definir)* | Clave de Google Books. **Sin ella esa fuente no funciona en absoluto** (ver nota 8). |
+| `BIBLIOTECA_REINTENTOS` | `3` | Intentos por fuente ante un fallo pasajero (5xx o corte de red). |
+| `BIBLIOTECA_ESPERA_REINTENTO` | `0.5` | Segundos antes del primer reintento; se duplica en cada uno. |
+
+Todas se pueden dejar en un archivo **`.env`** en la raíz del proyecto, que la
+API lee al arrancar:
+
+```
+BIBLIOTECA_API_KEY=tu-clave
+GOOGLE_API_KEY=AIza...
+```
+
+Está en `.gitignore` — **no lo versiones**, lleva secretos. Lo que ya esté en el
+entorno gana sobre el `.env`, así que puedes seguir sobrescribiendo una variable
+suelta para una prueba puntual.
 
 ---
 
@@ -159,8 +180,17 @@ curl -X POST localhost:8000/importar/isbns \
 
 ### Desde un CSV
 
-`POST /importar/csv`, con cabecera. Hay una plantilla lista para copiar en
-[`plantilla_libros.csv`](plantilla_libros.csv):
+`POST /importar/csv`, con cabecera. El archivo de trabajo suele llamarse
+`plantilla_libros.csv` y **no está versionado** (`.gitignore` lo excluye: acaba
+conteniendo tu propia lista de libros, no una plantilla). Créalo con esta
+cabecera y las columnas que necesites —el orden da igual y sobran las que no
+uses:
+
+```csv
+isbn,titulo,autor,editorial,anio,paginas,idioma,modulo_id,estado_fisico,notas
+9788437604947,,,,,,,21,bueno,Edición de Cátedra
+,Ficciones,Jorge Luis Borges,Sur,1944,203,es,24,bueno,Sin ISBN por su año
+```
 
 ```bash
 curl -X POST localhost:8000/importar/csv \
@@ -284,6 +314,112 @@ curl -X PATCH localhost:8000/ejemplares/1 -H 'X-API-Key: …' \
 
 ---
 
+## Estado del catálogo
+
+Primera carga real, para validar el modelo de punta a punta antes de seguir
+con el resto de la casa:
+
+| | |
+|---|---|
+| Libros / ejemplares | **14 / 14** |
+| Autores / editoriales | 15 / 8 |
+| Muebles situados en el plano | 6 |
+| Estanterías descritas | 1 (`escalera`) |
+| Casilleros | 10 |
+
+### El primer mueble
+
+Una estantería en escalera de 162 × 167 × 30 cm, con perfil de columnas
+**`1,2,3,4`** — diez casilleros, la columna alta a la derecha:
+
+```
+                              ┌─────────┐
+                              │   4,4   │
+                    ┌─────────┼─────────┤
+                    │   3,3   │   4,3   │
+          ┌─────────┼─────────┼─────────┤
+          │   2,2   │   3,2   │   4,2   │
+┌─────────┼─────────┼─────────┼─────────┤
+│   1,1   │   2,1   │   3,1   │   4,1   │
+└─────────┴─────────┴─────────┴─────────┘
+```
+
+Es justo el caso que motivó separar `estanterias` de `modulos`: no hay un
+«4 × 4» que declarar, sino diez huecos que existen y seis que no. Las cotas
+cierran exactas —tablero de 1,5 cm, hueco de 38,6 cm, y el casillero superior
+de cada columna más bajo (32,1 en vez de 40,1)—, y de ahí salen las alturas de
+los cuatro escalones: 42,2 / 83,8 / 125,4 / 167,0 cm.
+
+### Qué enseñó la primera carga
+
+- **Una sola fuente no basta.** Open Library conocía 4 de los 14; el resto
+  vino de Google Books. Con catálogo latinoamericano la cobertura de cada una
+  por separado es pobre.
+- **Los reintentos no son opcionales** con Google Books: pasaron la carga de 4
+  altas a 12 (ver [nota 8](#notas-importantes)).
+- **Quedan huecos que ninguna fuente cubre.** Un ISBN no lo conocía nadie y
+  hubo que teclearlo a mano; otro venía con el dígito de control mal impreso y
+  se resolvió con el ISBN-10 de la contracubierta.
+- **Las fichas externas llegan pobres.** Varios libros entraron sin páginas ni
+  editorial, y alguno con los acentos rotos en el propio origen. Se corrigen
+  con `PATCH /libros/{id}`.
+
+### Ejercicio: llevar el catálogo al mapa
+
+Con `paises` ya espacializada, agrupar los libros por país y verlos dibujados
+es una consulta. El país de **edición** no hace falta capturarlo: está dentro
+del propio ISBN, en el código de grupo de registro que sigue al `978`.
+
+```sql
+WITH nucleo AS (
+    SELECT id, CASE WHEN length(isbn) = 13 AND substr(isbn, 1, 3) IN ('978','979')
+                    THEN substr(isbn, 4) ELSE isbn END AS grupo
+    FROM libros WHERE isbn IS NOT NULL
+),
+grupos(prefijo, codigo_iso) AS (VALUES
+    ('84','ES'), ('958','CO'), ('607','MX'), ('968','MX'), ('970','MX'),
+    ('956','CL'), ('950','AR'), ('987','AR'), ('85','BR')
+)
+SELECT p.nombre, COUNT(*) AS libros, p.geom     -- p.geom -> capa en QGIS
+FROM nucleo n
+JOIN grupos g ON n.grupo LIKE g.prefijo || '%'
+JOIN paises p ON p.codigo_iso = g.codigo_iso
+GROUP BY p.codigo_iso, p.geom;
+```
+
+Sobre los 14 libros: Colombia 5, España 4, México 4, Chile 1. Los códigos de
+grupo forman un código de prefijos —ninguno es principio de otro—, así que el
+`LIKE` no es ambiguo; el `CASE` está porque un ISBN-10 no lleva el `978`.
+Cargada en QGIS (**Administrador de BBDD → Ventana SQL → Cargar como capa
+nueva**) sale el mapa directamente; con `ST_Centroid(p.geom)` salen puntos,
+mejores para graduar el tamaño por número de libros.
+
+**El país del autor es otra pregunta, y todavía no tiene datos.**
+`autores.pais_id` existe en el esquema pero está a NULL en los 15: ni Open
+Library ni Google Books devuelven la nacionalidad del autor en la ficha de un
+*libro* —es un dato de la ficha de *persona*—. Y no vale deducirlo del ISBN:
+eso dice dónde se imprimió, no de dónde es quien escribió. Este mismo catálogo
+lo desmiente, con un autor escocés en edición colombiana y una autora francesa
+en edición española. Hay que capturarlo a mano:
+
+```sql
+UPDATE autores SET pais_id = 'GB' WHERE apellidos = 'Ferguson';
+```
+
+Hecho eso, el mapa por nacionalidad es un join limpio de tres tablas, sin
+trucos de prefijos:
+
+```sql
+SELECT p.nombre AS pais_autor, COUNT(DISTINCT l.id) AS libros, p.geom
+FROM autores a
+JOIN paises p       ON p.codigo_iso = a.pais_id
+JOIN libro_autor la ON la.autor_id = a.id
+JOIN libros l       ON l.id = la.libro_id
+GROUP BY p.codigo_iso, p.geom;
+```
+
+---
+
 ## Endpoints
 
 | Recurso | Endpoints |
@@ -328,9 +464,12 @@ Son dos archivos, a propósito:
   cubre que un ejemplar se localiza hasta el punto del plano con la cadena de
   `JOIN`s, y que las fronteras de `paises` siguen siendo blobs GeoPackage
   válidos.
-- **`test_isbn.py`** (16) — el alta por ISBN y la importación en lote, que es
+- **`test_isbn.py`** (19) — el alta por ISBN y la importación en lote, que es
   la función principal de la API. Simulan Open Library y Google Books, así que
-  avisan si un cambio rompe el mapeo de la ficha externa.
+  avisan si un cambio rompe el mapeo de la ficha externa. Tres de ellas cubren
+  la política de reintentos: que un 503 pasajero se reintenta y el libro entra,
+  que un 404 **no** se reintenta, y que un 503 persistente acaba en 503 y no en
+  `no_encontrado` —la distinción que sostiene todo el diseño.
 
 Lo que **no** está aquí es deliberado: el CRUD corriente, los filtros de listado
 y los mensajes de error se comprueban igual de rápido en `/docs`, y cada cambio
@@ -384,10 +523,34 @@ de esquema obliga a reescribirlos. Esas pruebas siguen existiendo en local como
    `de Cervantes Saavedra`), y cuando la fuente solo da el año, la fecha se
    completa con el 1 de enero. Repasa y corrige con `PATCH` lo que haga falta.
 
-8. **Google Books limita el uso anónimo** con `429`. Si una fuente no responde,
-   la API devuelve 503 en vez de dar el ISBN por inexistente: «no lo encuentro»
-   y «no he podido preguntar» no son lo mismo, y confundirlos daría por perdido
-   un libro que sí está catalogado.
+8. **Google Books necesita clave, sin excepción.** No es que limite el uso
+   anónimo: le asigna cuota **cero**. Sin `GOOGLE_API_KEY` toda consulta
+   responde `429` con `"quota_limit_value": "0"`, y como Open Library se
+   consulta primero, el fallo pasa desapercibido hasta que aparece un ISBN que
+   ella no conoce. La API avisa al arrancar si la clave falta. Se saca gratis en
+   <https://console.cloud.google.com> (habilitar «Books API» → Credenciales →
+   Clave de API); el tope pasa a ser de unas 1.000 consultas al día.
+
+   La clave viaja en la cabecera `X-goog-api-key`, no como `?key=`: httpx
+   incluye la URL completa en el texto de sus excepciones, y un simple 503
+   dejaría el secreto escrito en el log.
+
+   **Google Books además falla de forma intermitente** con `503 Service
+   temporarily unavailable` —medido en torno al 40 % de las peticiones—, sin
+   relación con el ritmo al que se consulte (se comprobó espaciando las
+   llamadas 3 segundos y falló igual). Por eso cada fuente se consulta con
+   **reintentos**: 3 intentos con espera creciente, y solo ante 5xx o cortes de
+   red. Un `404` no se reintenta —«no lo tengo» es una respuesta, no un fallo—
+   ni un `429`, que significa cuota y no se arregla insistiendo.
+
+   El efecto es grande: la misma importación de 14 libros pasó de **4 altas a
+   12** al añadir los reintentos. Si aun así queda alguna fila en `error`,
+   basta reejecutar el mismo CSV: lo ya cargado sale como `duplicado` y no se
+   duplica.
+
+   Cuando una fuente no responde, la API devuelve 503 en vez de dar el ISBN por
+   inexistente: «no lo encuentro» y «no he podido preguntar» no son lo mismo, y
+   confundirlos daría por perdido un libro que sí está catalogado.
 
 9. **Un ejemplar nunca guarda dónde está, sino en qué hueco**: no hay
    `ejemplares.ubicacion_id` ni coordenadas propias, a propósito. Si las

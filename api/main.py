@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from .config import GPKG_PATH
+from .config import GOOGLE_API_KEY, GPKG_PATH
 from .db import conectar
 from .routers import catalogos, ejemplares, importar, isbn, libros
 from .security import avisar_si_sin_clave
@@ -33,6 +33,13 @@ Las lecturas son abiertas; toda escritura exige la cabecera `X-API-Key`
 @asynccontextmanager
 async def ciclo_de_vida(app: FastAPI):
     avisar_si_sin_clave()
+    if GOOGLE_API_KEY is None:
+        # Sin avisar, el respaldo falla en silencio: Open Library responde
+        # primero y solo se nota cuando un ISBN que ella no conoce da error.
+        log.warning(
+            "GOOGLE_API_KEY no está definida: Google Books responderá 429 a todo "
+            "(el uso anónimo tiene cuota 0). Open Library queda como única fuente."
+        )
     conectar().close()  # falla pronto y con un mensaje claro si el .gpkg no está
     log.info("GeoPackage: %s", GPKG_PATH)
     yield

@@ -272,3 +272,62 @@ def test_importar_csv_sin_cabecera_da_422(cliente):
         "/importar/csv", files={"archivo": ("x.csv", "", "text/csv")}, headers=CLAVE
     )
     assert resp.status_code == 422
+
+
+# --------------------------------------------------------------------- reintentos
+def test_un_503_pasajero_se_reintenta_y_el_libro_entra(cliente, monkeypatch):
+    """Google Books cae con 503 al azar; sin reintentos se perdería el libro."""
+    intentos = {"n": 0}
+
+    def flaquea(peticion: httpx.Request) -> httpx.Response:
+        if "googleapis.com" in str(peticion.url):
+            intentos["n"] += 1
+            if intentos["n"] < 3:
+                return httpx.Response(503, json={"error": {"message": "Service unavailable"}})
+        return _manejador(peticion)
+
+    monkeypatch.setattr(
+        mapper, "cliente_http",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(flaquea)))
+    monkeypatch.setattr("api.services.mapper.ESPERA_REINTENTO", 0)
+
+    resp = cliente.post("/libros/desde-isbn", json={"isbn": SILENCIO}, headers=CLAVE)
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["titulo"] == "El silencio de la ciudad blanca"
+    assert intentos["n"] == 3  # dos caídas y a la tercera entra
+
+
+def test_un_404_no_se_reintenta(cliente, monkeypatch):
+    """«No lo tengo» es una respuesta, no un fallo: insistir sería tiempo perdido."""
+    intentos = {"n": 0}
+
+    def siempre_404(peticion: httpx.Request) -> httpx.Response:
+        if "googleapis.com" in str(peticion.url):
+            intentos["n"] += 1
+            return httpx.Response(404, json={"error": {"message": "no existe"}})
+        return _manejador(peticion)
+
+    monkeypatch.setattr(
+        mapper, "cliente_http",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(siempre_404)))
+    monkeypatch.setattr("api.services.mapper.ESPERA_REINTENTO", 0)
+
+    cliente.post("/libros/desde-isbn", json={"isbn": DESCONOCIDO}, headers=CLAVE)
+    assert intentos["n"] == 1
+
+
+def test_un_503_persistente_acaba_en_503_y_no_en_no_encontrado(cliente, monkeypatch):
+    """Agotados los reintentos, sigue siendo «no he podido preguntar»."""
+    def siempre_503(peticion: httpx.Request) -> httpx.Response:
+        if "googleapis.com" in str(peticion.url):
+            return httpx.Response(503, json={"error": {"message": "Service unavailable"}})
+        return _manejador(peticion)
+
+    monkeypatch.setattr(
+        mapper, "cliente_http",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(siempre_503)))
+    monkeypatch.setattr("api.services.mapper.ESPERA_REINTENTO", 0)
+
+    resp = cliente.post("/libros/desde-isbn", json={"isbn": DESCONOCIDO}, headers=CLAVE)
+    assert resp.status_code == 503
+    assert "No se puede confirmar" in resp.json()["detail"]

@@ -16,3 +16,8 @@ sql/herramientas/*
 tests/test_extra.py
 # Sidecar de estilo que QGIS deja junto a las capas
 *.qmd
+
+# Secretos: claves de API. NUNCA versionar este archivo.
+.env
+# Bloqueos que deja LibreOffice al abrir un CSV
+.~lock.*#

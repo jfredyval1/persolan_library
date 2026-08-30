@@ -32,7 +32,7 @@ async def buscar(cliente: httpx.AsyncClient, isbn: str) -> FichaISBN | None:
         titulo=datos.get("title") or "(sin título)",
         titulo_original=datos.get("subtitle"),
         fecha_publicacion=parsear_fecha(datos.get("publish_date")),
-        numero_paginas=datos.get("number_of_pages"),
+        numero_paginas=datos.get("number_of_pages") or None,  # 0 no es un número de páginas
         portada_path=portada,
         dewey_codigo_completo=dewey,
         editorial=(datos.get("publishers") or [{}])[0].get("name"),
