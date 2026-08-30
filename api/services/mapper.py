@@ -99,7 +99,9 @@ def persistir_ficha(
                 "formato": extras.formato,
                 "fecha_adquisicion": extras.fecha_adquisicion,
                 "precio_compra": extras.precio_compra,
-                "ubicacion_id": extras.ubicacion_id,
+                "modulo_id": extras.modulo_id,
+                "tiene_hongos": extras.tiene_hongos,
+                "requiere_reparacion": extras.requiere_reparacion,
                 "en_prestamo": 0,
                 "notas": extras.notas,
             },
@@ -109,10 +111,12 @@ def persistir_ficha(
 
 
 def _pide_ejemplar(extras: DesdeISBN) -> bool:
+    # tiene_hongos y requiere_reparacion no cuentan: valen False por defecto y
+    # decir «no tiene hongos» de un libro que no se tiene no pide un ejemplar.
     return any(
         v is not None
         for v in (
-            extras.ubicacion_id,
+            extras.modulo_id,
             extras.estado_fisico,
             extras.formato,
             extras.fecha_adquisicion,

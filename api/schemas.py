@@ -103,24 +103,91 @@ class Editorial(EditorialCrear):
 
 
 # --------------------------------------------------------------------------- ubicaciones
+# Un punto del plano de la casa: la huella de un mueble, no la de una balda.
 class UbicacionCrear(Base):
     nombre: str = Field(min_length=1)
     habitacion: str | None = None
-    mueble: str | None = None
-    nivel_balda: str | None = None
-    capacidad_estimada: int | None = Field(default=None, ge=0)
 
 
 class UbicacionEditar(Base):
     nombre: str | None = None
     habitacion: str | None = None
-    mueble: str | None = None
-    nivel_balda: str | None = None
-    capacidad_estimada: int | None = Field(default=None, ge=0)
 
 
 class Ubicacion(UbicacionCrear):
     id: int
+
+
+# --------------------------------------------------------------------------- estanterias
+class EstanteriaCrear(Base):
+    ubicacion_id: int
+    nombre: str = Field(min_length=1)
+    tipo: str | None = None
+    ancho_total_cm: float | None = Field(default=None, gt=0)
+    alto_total_cm: float | None = Field(default=None, gt=0)
+    profundidad_cm: float | None = Field(default=None, gt=0)
+    orientacion_grados: float = Field(default=0, ge=0, lt=360)
+
+
+class EstanteriaEditar(Base):
+    ubicacion_id: int | None = None
+    nombre: str | None = None
+    tipo: str | None = None
+    ancho_total_cm: float | None = Field(default=None, gt=0)
+    alto_total_cm: float | None = Field(default=None, gt=0)
+    profundidad_cm: float | None = Field(default=None, gt=0)
+    orientacion_grados: float | None = Field(default=None, ge=0, lt=360)
+
+
+class Estanteria(EstanteriaCrear):
+    id: int
+
+
+# --------------------------------------------------------------------------- modulos
+# Un casillero. `x_offset_cm`/`z_offset_cm` son coordenadas LOCALES en cm desde
+# el ancla del mueble; nunca coordenadas del plano de la casa.
+class ModuloCrear(Base):
+    estanteria_id: int
+    columna: int = Field(ge=1)
+    fila: int = Field(ge=1)
+    x_offset_cm: float | None = None
+    z_offset_cm: float | None = None
+    ancho_cm: float | None = Field(default=None, gt=0)
+    alto_cm: float | None = Field(default=None, gt=0)
+    profundidad_cm: float | None = Field(default=None, gt=0)
+    capacidad_estimada: int | None = Field(default=None, ge=0)
+
+
+class ModuloEditar(Base):
+    estanteria_id: int | None = None
+    columna: int | None = Field(default=None, ge=1)
+    fila: int | None = Field(default=None, ge=1)
+    x_offset_cm: float | None = None
+    z_offset_cm: float | None = None
+    ancho_cm: float | None = Field(default=None, gt=0)
+    alto_cm: float | None = Field(default=None, gt=0)
+    profundidad_cm: float | None = Field(default=None, gt=0)
+    capacidad_estimada: int | None = Field(default=None, ge=0)
+
+
+class Modulo(ModuloCrear):
+    id: int
+
+
+class Localizacion(Base):
+    """Dónde está un ejemplar, resuelto por la cadena de claves foráneas."""
+
+    ejemplar_id: int
+    titulo: str
+    modulo_id: int
+    columna: int
+    fila: int
+    estanteria_id: int
+    estanteria: str
+    tipo: str | None = None
+    ubicacion_id: int
+    ubicacion: str
+    habitacion: str | None = None
 
 
 # --------------------------------------------------------------------------- ejemplares
@@ -129,7 +196,12 @@ class _EjemplarCampos(Base):
     formato: str | None = None
     fecha_adquisicion: date | None = None
     precio_compra: float | None = Field(default=None, ge=0)
-    ubicacion_id: int | None = None
+    # El sitio de una copia es un casillero, no un punto del plano: la ubicación
+    # se deduce subiendo por modulos -> estanterias -> ubicaciones.
+    modulo_id: int | None = None
+    tiene_hongos: bool = False
+    requiere_reparacion: bool = False
+    fecha_revision: date | None = None
     en_prestamo: bool = False
     prestado_a: str | None = None
     notas: str | None = None
@@ -152,7 +224,10 @@ class EjemplarEditar(Base):
     formato: str | None = None
     fecha_adquisicion: date | None = None
     precio_compra: float | None = Field(default=None, ge=0)
-    ubicacion_id: int | None = None
+    modulo_id: int | None = None
+    tiene_hongos: bool | None = None
+    requiere_reparacion: bool | None = None
+    fecha_revision: date | None = None
     en_prestamo: bool | None = None
     prestado_a: str | None = None
     notas: str | None = None
@@ -232,12 +307,16 @@ class FichaISBN(Base):
 
 class DesdeISBN(Base):
     isbn: str
-    # Si se indica ubicación o estado, se crea además un ejemplar inicial.
-    ubicacion_id: int | None = None
+    # Todo lo demás es opcional y describe TU copia, no el libro: si se indica
+    # algo de esto se crea además un ejemplar inicial, colocado en `modulo_id`
+    # si se da uno.
+    modulo_id: int | None = None
     estado_fisico: EstadoFisico | None = None
     formato: str | None = None
     fecha_adquisicion: date | None = None
     precio_compra: float | None = Field(default=None, ge=0)
+    tiene_hongos: bool = False
+    requiere_reparacion: bool = False
     notas: str | None = None
 
 
@@ -248,7 +327,7 @@ class LibroCreadoDesdeISBN(LibroDetalle):
 # --------------------------------------------------------------------------- importación
 class LoteISBN(Base):
     isbns: list[str] = Field(min_length=1)
-    ubicacion_id: int | None = None
+    modulo_id: int | None = None
     estado_fisico: EstadoFisico | None = None
 
 

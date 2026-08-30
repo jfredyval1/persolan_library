@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import crud
 from ..db import obtener_db
-from ..schemas import Ejemplar, EjemplarCrear, EjemplarEditar
+from ..schemas import Ejemplar, EjemplarCrear, EjemplarEditar, Localizacion
 from ..security import exigir_api_key
 
 router = APIRouter(prefix="/ejemplares", tags=["ejemplares"])
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/ejemplares", tags=["ejemplares"])
 def listar(
     q: str | None = Query(None, description="Filtro por notas o por a quién está prestado"),
     libro_id: int | None = None,
-    ubicacion_id: int | None = None,
+    modulo_id: int | None = None,
     en_prestamo: bool | None = Query(None, description="Filtrar por préstamo"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -27,7 +27,7 @@ def listar(
         limit=limit, offset=offset, q=q,
         filtros={
             "libro_id": libro_id,
-            "ubicacion_id": ubicacion_id,
+            "modulo_id": modulo_id,
             "en_prestamo": en_prestamo,
         },
     )
@@ -39,6 +39,27 @@ def obtener(ejemplar_id: int, conn: sqlite3.Connection = Depends(obtener_db)):
     if ejemplar is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No existe el ejemplar {ejemplar_id}.")
     return ejemplar
+
+
+@router.get(
+    "/{ejemplar_id}/localizacion",
+    response_model=Localizacion,
+    summary="Dónde está esta copia: casillero, mueble y punto del plano",
+)
+def localizacion(ejemplar_id: int, conn: sqlite3.Connection = Depends(obtener_db)):
+    sitio = crud.localizacion(conn, ejemplar_id)
+    if sitio is not None:
+        return sitio
+
+    # Un ejemplar que existe pero no está colocado no es un 404 del recurso:
+    # merece decirlo con esas palabras en vez de «no existe».
+    if crud.obtener(conn, "ejemplares", ejemplar_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No existe el ejemplar {ejemplar_id}.")
+    raise HTTPException(
+        status.HTTP_404_NOT_FOUND,
+        f"El ejemplar {ejemplar_id} no está colocado en ningún módulo. "
+        "Asígnale uno con PATCH /ejemplares/{id} {\"modulo_id\": ...}.",
+    )
 
 
 @router.post(

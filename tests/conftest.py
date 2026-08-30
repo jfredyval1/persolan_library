@@ -56,3 +56,26 @@ def cliente():
 @pytest.fixture
 def conexion():
     return sqlite3.connect(GPKG)
+
+
+def crear_modulo(cliente, *, nombre="central", habitacion="sala", columna=1, fila=1) -> dict:
+    """Da de alta un mueble entero y devuelve sus tres piezas.
+
+    Colocar un libro cuesta tres altas —el punto en el plano, el mueble y el
+    casillero— porque son tres cosas distintas; casi todas las pruebas solo
+    necesitan el `modulo`, así que se hace aquí una vez.
+    """
+    ubicacion = cliente.post(
+        "/ubicaciones", json={"nombre": nombre, "habitacion": habitacion}, headers=CLAVE
+    ).json()
+    estanteria = cliente.post(
+        "/estanterias",
+        json={"ubicacion_id": ubicacion["id"], "nombre": nombre, "tipo": "biblioteca"},
+        headers=CLAVE,
+    ).json()
+    modulo = cliente.post(
+        "/modulos",
+        json={"estanteria_id": estanteria["id"], "columna": columna, "fila": fila},
+        headers=CLAVE,
+    ).json()
+    return {"ubicacion": ubicacion, "estanteria": estanteria, "modulo": modulo}

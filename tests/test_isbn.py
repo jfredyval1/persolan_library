@@ -9,7 +9,7 @@ import pytest
 
 from api.services import mapper
 
-from .conftest import CLAVE
+from .conftest import CLAVE, crear_modulo
 
 MR_FOX = "9780140328721"        # solo en Open Library
 SILENCIO = "9788420471839"      # solo en Google Books
@@ -146,17 +146,25 @@ def test_alta_desde_isbn_reutiliza_autor_y_editorial_existentes(cliente):
 
 
 def test_alta_desde_isbn_puede_crear_el_ejemplar(cliente):
-    ubicacion = cliente.post("/ubicaciones", json={"nombre": "repisa_1"}, headers=CLAVE).json()
+    """El caso de uso central: un ISBN y, opcionalmente, dónde lo pongo."""
+    mueble = crear_modulo(cliente, nombre="repisa_1")
 
     libro = cliente.post(
         "/libros/desde-isbn",
-        json={"isbn": MR_FOX, "ubicacion_id": ubicacion["id"], "estado_fisico": "bueno"},
+        json={"isbn": MR_FOX, "modulo_id": mueble["modulo"]["id"], "estado_fisico": "bueno"},
         headers=CLAVE,
     ).json()
 
     assert len(libro["ejemplares"]) == 1
-    assert libro["ejemplares"][0]["ubicacion_id"] == ubicacion["id"]
-    assert libro["ejemplares"][0]["en_prestamo"] is False
+    ejemplar = libro["ejemplares"][0]
+    assert ejemplar["modulo_id"] == mueble["modulo"]["id"]
+    assert ejemplar["en_prestamo"] is False
+    assert (ejemplar["tiene_hongos"], ejemplar["requiere_reparacion"]) == (False, False)
+
+    # Y desde el ejemplar se llega hasta el punto del plano.
+    sitio = cliente.get(f"/ejemplares/{ejemplar['id']}/localizacion").json()
+    assert sitio["ubicacion_id"] == mueble["ubicacion"]["id"]
+    assert sitio["titulo"] == "Fantastic Mr. Fox"
 
 
 def test_alta_desde_isbn_sin_ejemplar_por_defecto(cliente):
@@ -223,12 +231,12 @@ def test_importar_lista_de_isbns(cliente):
 
 
 def test_importar_csv_mezcla_isbn_y_alta_manual(cliente):
-    ubicacion = cliente.post("/ubicaciones", json={"nombre": "central"}, headers=CLAVE).json()
+    modulo_id = crear_modulo(cliente)["modulo"]["id"]
     csv = (
-        "isbn,titulo,autor,editorial,anio,paginas,idioma,ubicacion_id,estado_fisico\n"
-        f"{MR_FOX},,,,,,,{ubicacion['id']},bueno\n"
+        "isbn,titulo,autor,editorial,anio,paginas,idioma,modulo_id,estado_fisico\n"
+        f"{MR_FOX},,,,,,,{modulo_id},bueno\n"
         ",Rayuela,Julio Cortázar,Sudamericana,1963,736,es,"
-        f"{ubicacion['id']},regular\n"
+        f"{modulo_id},regular\n"
         ",,,,,,,,\n"
     )
 

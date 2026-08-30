@@ -19,7 +19,15 @@ COLUMNAS: dict[str, list[str]] = {
     "generos": ["id", "nombre", "dewey_relacionado"],
     "autores": ["id", "nombre", "apellidos", "pais_id", "fecha_nacimiento", "fecha_fallecimiento"],
     "editoriales": ["id", "nombre", "pais_id", "ciudad_publicacion"],
-    "ubicaciones": ["id", "nombre", "habitacion", "mueble", "nivel_balda", "capacidad_estimada"],
+    "ubicaciones": ["id", "nombre", "habitacion"],
+    "estanterias": [
+        "id", "ubicacion_id", "nombre", "tipo", "ancho_total_cm",
+        "alto_total_cm", "profundidad_cm", "orientacion_grados",
+    ],
+    "modulos": [
+        "id", "estanteria_id", "columna", "fila", "x_offset_cm", "z_offset_cm",
+        "ancho_cm", "alto_cm", "profundidad_cm", "capacidad_estimada",
+    ],
     "libros": [
         "id", "titulo", "titulo_original", "isbn", "idioma",
         "dewey_codigo_completo", "dewey_categoria_id", "fecha_publicacion",
@@ -28,7 +36,8 @@ COLUMNAS: dict[str, list[str]] = {
     ],
     "ejemplares": [
         "id", "libro_id", "estado_fisico", "formato", "fecha_adquisicion",
-        "precio_compra", "ubicacion_id", "en_prestamo", "prestado_a", "notas",
+        "precio_compra", "modulo_id", "tiene_hongos", "requiere_reparacion",
+        "fecha_revision", "en_prestamo", "prestado_a", "notas",
     ],
 }
 
@@ -38,13 +47,16 @@ CLAVE: dict[str, str] = {"paises": "codigo_iso", "dewey": "codigo"}
 # Columnas sobre las que actúa el filtro `q`. Varias por tabla donde buscar por
 # una sola sería antinatural: a un autor se le busca por el apellido tanto como
 # por el nombre, y a un libro por su título original tanto como por el traducido.
+# `modulos` no aparece: un casillero se identifica por columna y fila, no por
+# texto, así que allí `q` no filtra nada (ver `listar`).
 CAMPOS_BUSQUEDA: dict[str, tuple[str, ...]] = {
     "paises": ("nombre",),
     "dewey": ("descripcion", "codigo"),
     "generos": ("nombre",),
     "autores": ("nombre", "apellidos"),
     "editoriales": ("nombre", "ciudad_publicacion"),
-    "ubicaciones": ("nombre", "habitacion", "mueble"),
+    "ubicaciones": ("nombre", "habitacion"),
+    "estanterias": ("nombre", "tipo"),
     "libros": ("titulo", "titulo_original", "isbn"),
     "ejemplares": ("notas", "prestado_a"),
 }
@@ -80,8 +92,8 @@ def listar(
     condiciones: list[str] = []
     params: list[Any] = []
 
-    if q:
-        campos = CAMPOS_BUSQUEDA[tabla]
+    campos = CAMPOS_BUSQUEDA.get(tabla, ())
+    if q and campos:
         condiciones.append("(" + " OR ".join(f"{c} LIKE ?" for c in campos) + ")")
         params += [f"%{q}%"] * len(campos)
     for campo, valor in (filtros or {}).items():
@@ -191,6 +203,33 @@ def detalle_libro(conn: sqlite3.Connection, libro_id: int) -> dict | None:
     )
     return libro
 
+
+
+# ------------------------------------------------ localización de un ejemplar
+def localizacion(conn: sqlite3.Connection, ejemplar_id: int) -> dict | None:
+    """Dónde está una copia, en un solo SELECT.
+
+    Recorre la cadena entera de claves foráneas —ejemplares -> modulos ->
+    estanterias -> ubicaciones— sin tocar geometría: todos los saltos son
+    enteros y lo único espacial, `ubicaciones.geom`, se queda fuera.
+
+    Devuelve None tanto si el ejemplar no existe como si no está colocado en
+    ningún módulo; distinguir los dos casos es cosa del router.
+    """
+    fila = conn.execute(
+        "SELECT ej.id AS ejemplar_id, l.titulo, "
+        "       m.id AS modulo_id, m.columna, m.fila, "
+        "       e.id AS estanteria_id, e.nombre AS estanteria, e.tipo, "
+        "       u.id AS ubicacion_id, u.nombre AS ubicacion, u.habitacion "
+        "FROM ejemplares ej "
+        "JOIN libros      l ON l.id = ej.libro_id "
+        "JOIN modulos     m ON m.id = ej.modulo_id "
+        "JOIN estanterias e ON e.id = m.estanteria_id "
+        "JOIN ubicaciones u ON u.id = e.ubicacion_id "
+        "WHERE ej.id = ?",
+        (ejemplar_id,),
+    ).fetchone()
+    return dict(fila) if fila else None
 
 # ------------------------------------------------- buscar-o-crear (alta por ISBN)
 def buscar_o_crear_editorial(conn: sqlite3.Connection, nombre: str) -> int:

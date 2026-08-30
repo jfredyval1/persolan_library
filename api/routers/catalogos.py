@@ -1,7 +1,7 @@
 """CRUD de las tablas de catálogo.
 
-Las seis comparten exactamente la misma forma, así que se generan con una
-fábrica en lugar de repetir seis veces el mismo bloque de endpoints.
+Las ocho comparten exactamente la misma forma, así que se generan con una
+fábrica en lugar de repetir ocho veces el mismo bloque de endpoints.
 """
 
 import sqlite3
@@ -109,5 +109,15 @@ ROUTERS = [
     crear_router(
         tabla="ubicaciones", etiqueta="catálogos",
         Salida=schemas.Ubicacion, Crear=schemas.UbicacionCrear, Editar=schemas.UbicacionEditar,
+    ),
+    crear_router(
+        tabla="estanterias", etiqueta="mobiliario",
+        Salida=schemas.Estanteria, Crear=schemas.EstanteriaCrear, Editar=schemas.EstanteriaEditar,
+    ),
+    # `modulos` no tiene ninguna columna de texto, así que su `q` no filtra
+    # nada; se deja por uniformidad con el resto de listados.
+    crear_router(
+        tabla="modulos", etiqueta="mobiliario",
+        Salida=schemas.Modulo, Crear=schemas.ModuloCrear, Editar=schemas.ModuloEditar,
     ),
 ]

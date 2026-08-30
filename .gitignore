@@ -7,3 +7,12 @@ __pycache__/
 *.gpkg-shm
 # Excluir el gpkg
 *.gpkg
+# Excluir herramientas
+plantilla_libros.csv
+sql/herramientas/*
+
+# Pruebas de conveniencia (CRUD, filtros, mensajes): se conservan en local,
+# pero el repo solo versiona el núcleo -> tests/test_esquema.py y test_isbn.py
+tests/test_extra.py
+# Sidecar de estilo que QGIS deja junto a las capas
+*.qmd

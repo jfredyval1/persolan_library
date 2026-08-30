@@ -26,7 +26,7 @@ router = APIRouter(
 
 COLUMNAS_CSV = (
     "isbn, titulo, autor, editorial, anio, paginas, idioma, "
-    "ubicacion_id, estado_fisico, notas"
+    "modulo_id, estado_fisico, notas"
 )
 
 
@@ -93,7 +93,7 @@ async def _procesar_isbn(
 )
 async def importar_isbns(lote: LoteISBN, conn: sqlite3.Connection = Depends(obtener_db)):
     extras = DesdeISBN(
-        isbn="", ubicacion_id=lote.ubicacion_id, estado_fisico=lote.estado_fisico
+        isbn="", modulo_id=lote.modulo_id, estado_fisico=lote.estado_fisico
     )
     filas: list[ResultadoFila] = []
 
@@ -144,12 +144,12 @@ def _crear_desde_columnas(conn: sqlite3.Connection, numero: int, fila: dict) -> 
                 [crud.buscar_o_crear_autor(conn, a.strip()) for a in autor.split(";") if a.strip()],
             )
 
-        ubicacion_id = _entero(fila.get("ubicacion_id"))
+        modulo_id = _entero(fila.get("modulo_id"))
         estado_fisico = (fila.get("estado_fisico") or "").strip() or None
-        if ubicacion_id or estado_fisico:
+        if modulo_id or estado_fisico:
             crud.crear(conn, "ejemplares", {
                 "libro_id": libro["id"],
-                "ubicacion_id": ubicacion_id,
+                "modulo_id": modulo_id,
                 "estado_fisico": estado_fisico,
                 "notas": (fila.get("notas") or "").strip() or None,
                 "en_prestamo": 0,
@@ -199,7 +199,7 @@ async def importar_csv(
                 try:
                     extras = DesdeISBN(
                         isbn=bruto,
-                        ubicacion_id=_entero(fila.get("ubicacion_id")),
+                        modulo_id=_entero(fila.get("modulo_id")),
                         estado_fisico=(fila.get("estado_fisico") or "").strip() or None,
                         notas=(fila.get("notas") or "").strip() or None,
                     )
