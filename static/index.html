@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Escáner ISBN — Biblioteca personal</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; font-family: -apple-system, system-ui, sans-serif;
+    background: #14171a; color: #e6e6e6; display: flex; flex-direction: column;
+    align-items: center; min-height: 100vh; padding: 16px; box-sizing: border-box;
+  }
+  h1 { font-size: 1.1rem; margin: 0 0 12px; color: #9fd3ff; }
+  #video-wrap {
+    position: relative; width: 100%; max-width: 480px; aspect-ratio: 4/3;
+    background: #000; border-radius: 12px; overflow: hidden;
+  }
+  video { width: 100%; height: 100%; object-fit: cover; }
+  #frame {
+    position: absolute; inset: 20% 10%; border: 2px solid #4ade80;
+    border-radius: 8px; pointer-events: none; opacity: .6;
+  }
+  form {
+    width: 100%; max-width: 480px; margin-top: 16px; display: grid;
+    grid-template-columns: 1fr 1fr; gap: 8px;
+  }
+  form label { grid-column: span 2; font-size: .8rem; color: #9aa4ad; }
+  input, select {
+    background: #1f2428; color: #e6e6e6; border: 1px solid #333;
+    border-radius: 8px; padding: 10px; font-size: 1rem; box-sizing: border-box;
+  }
+  #api_url, #api_key { grid-column: span 2; }
+  #log {
+    width: 100%; max-width: 480px; margin-top: 16px; display: flex;
+    flex-direction: column; gap: 6px;
+  }
+  .entry {
+    padding: 10px 12px; border-radius: 8px; font-size: .9rem; display: flex;
+    justify-content: space-between; gap: 8px;
+  }
+  .creado { background: #14361f; color: #86efac; }
+  .duplicado { background: #3a3212; color: #fde68a; }
+  .error, .no_encontrado { background: #3a1414; color: #fca5a5; }
+  #status { font-size: .85rem; color: #9aa4ad; margin-top: 10px; min-height: 1.2em; }
+  button {
+    grid-column: span 2; padding: 12px; border: none; border-radius: 8px;
+    background: #2563eb; color: white; font-size: 1rem; margin-top: 4px;
+  }
+  #toggle { background: #444; }
+</style>
+</head>
+<body>
+
+<h1>📚 Escáner ISBN</h1>
+
+<div id="video-wrap">
+  <video id="video" autoplay playsinline muted></video>
+  <div id="frame"></div>
+</div>
+<div id="status">Iniciando cámara…</div>
+
+<form onsubmit="return false;">
+  <label for="api_url">URL de la API</label>
+  <input id="api_url" type="text" placeholder="https://tu-pi.tailnet.ts.net:8000" value="">
+
+  <label for="api_key">X-API-Key</label>
+  <input id="api_key" type="text" placeholder="tu-clave">
+
+  <div>
+    <label for="modulo_id" style="grid-column:auto;">Casillero (modulo_id)</label>
+    <input id="modulo_id" type="number" placeholder="opcional">
+  </div>
+  <div>
+    <label for="estado" style="grid-column:auto;">Estado físico</label>
+    <select id="estado">
+      <option value="">(sin ejemplar)</option>
+      <option value="nuevo">nuevo</option>
+      <option value="bueno" selected>bueno</option>
+      <option value="regular">regular</option>
+      <option value="dañado">dañado</option>
+    </select>
+  </div>
+
+  <button id="toggle" type="button" onclick="toggleScan()">Pausar</button>
+</form>
+
+<div id="log"></div>
+
+<script>
+const video = document.getElementById('video');
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+let scanning = true;
+let busy = false; // evita doble envío mientras esperamos respuesta de la API
+const vistos = new Set(); // evita reenviar el mismo ISBN varias veces seguidas
+
+// Recuerda la config en este mismo dispositivo, sin backend
+['api_url','api_key','modulo_id','estado'].forEach(id => {
+  const el = document.getElementById(id);
+  const saved = localStorageSafe('get', id);
+  if (saved) el.value = saved;
+  // La página se sirve desde la propia API, así que el origen ya es la URL
+  // buena: uno menos que teclear en el móvil la primera vez.
+  else if (id === 'api_url') el.value = window.location.origin;
+  el.addEventListener('change', () => localStorageSafe('set', id, el.value));
+});
+function localStorageSafe(op, key, val) {
+  // localStorage falla dentro de artefactos embebidos; en una página servida normal funciona bien.
+  try {
+    if (op === 'get') return localStorage.getItem('isbn_scan_' + key) || '';
+    localStorage.setItem('isbn_scan_' + key, val);
+  } catch (e) { /* noop */ }
+}
+
+function toggleScan() {
+  scanning = !scanning;
+  document.getElementById('toggle').textContent = scanning ? 'Pausar' : 'Reanudar';
+  if (scanning) requestAnimationFrame(loop);
+}
+
+async function start() {
+  if (!('BarcodeDetector' in window)) {
+    statusEl.textContent = '⚠️ Este navegador no soporta BarcodeDetector. Usa Chrome en Android.';
+    return;
+  }
+  const formatos = await BarcodeDetector.getSupportedFormats();
+  if (!formatos.includes('ean_13')) {
+    statusEl.textContent = '⚠️ Este navegador no reconoce EAN-13.';
+    return;
+  }
+  const detector = new BarcodeDetector({ formats: ['ean_13'] });
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' }
+    });
+    video.srcObject = stream;
+    statusEl.textContent = 'Apunta al código de barras…';
+    loop(detector);
+  } catch (e) {
+    statusEl.textContent = '⚠️ No se pudo abrir la cámara: ' + e.message +
+      ' (¿estás en HTTPS o localhost?)';
+  }
+}
+
+async function loop(detector) {
+  if (!scanning) return;
+  try {
+    const codigos = await detector.detect(video);
+    if (codigos.length) {
+      const isbn = codigos[0].rawValue;
+      if (!busy && !vistos.has(isbn)) {
+        vistos.add(isbn);
+        setTimeout(() => vistos.delete(isbn), 4000); // permite reescanear pasado un rato
+        enviar(isbn);
+      }
+    }
+  } catch (e) { /* frame sin detección, seguir */ }
+  requestAnimationFrame(() => loop(detector));
+}
+
+async function enviar(isbn) {
+  const apiUrl = document.getElementById('api_url').value.replace(/\/$/, '');
+  const apiKey = document.getElementById('api_key').value;
+  const moduloId = document.getElementById('modulo_id').value;
+  const estado = document.getElementById('estado').value;
+
+  if (!apiUrl || !apiKey) {
+    statusEl.textContent = '⚠️ Completa la URL de la API y la clave antes de escanear.';
+    return;
+  }
+
+  busy = true;
+  statusEl.textContent = `Enviando ${isbn}…`;
+
+  const body = { isbn };
+  if (moduloId) body.modulo_id = Number(moduloId);
+  if (estado) body.estado_fisico = estado;
+
+  try {
+    const resp = await fetch(`${apiUrl}/libros/desde-isbn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify(body)
+    });
+    const data = await resp.json().catch(() => ({}));
+
+    if (resp.status === 200 || resp.status === 201) {
+      addEntry('creado', isbn, data.titulo || 'Creado');
+    } else if (resp.status === 409) {
+      addEntry('duplicado', isbn, 'Ya estaba en el catálogo');
+    } else if (resp.status === 404) {
+      addEntry('no_encontrado', isbn, 'Ninguna fuente lo conoce');
+    } else {
+      addEntry('error', isbn, data.detail || `HTTP ${resp.status}`);
+    }
+  } catch (e) {
+    addEntry('error', isbn, 'Fallo de red: ' + e.message);
+  } finally {
+    busy = false;
+    statusEl.textContent = 'Apunta al código de barras…';
+  }
+}
+
+function addEntry(tipo, isbn, texto) {
+  const div = document.createElement('div');
+  div.className = 'entry ' + tipo;
+  div.innerHTML = `<span>${isbn}</span><span>${texto}</span>`;
+  logEl.prepend(div);
+}
+
+start();
+</script>
+</body>
+</html>

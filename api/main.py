@@ -10,14 +10,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
-from .config import GOOGLE_API_KEY, GPKG_PATH
+from .config import GOOGLE_API_KEY, GPKG_PATH, RAIZ
 from .db import conectar
 from .routers import catalogos, ejemplares, importar, isbn, libros
 from .security import avisar_si_sin_clave
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("biblioteca")
+
 
 DESCRIPCION = """
 Catálogo de la biblioteca personal sobre un GeoPackage (SQLite).
@@ -29,6 +31,7 @@ Para varios de golpe, `POST /importar/isbns`.
 Las lecturas son abiertas; toda escritura exige la cabecera `X-API-Key`
 (botón **Authorize** arriba a la derecha).
 """
+
 
 @asynccontextmanager
 async def ciclo_de_vida(app: FastAPI):
@@ -58,6 +61,11 @@ app.include_router(libros.router)
 app.include_router(ejemplares.router)
 app.include_router(isbn.router)
 app.include_router(importar.router)
+
+# Página para escanear el código de barras con la cámara: /scanner sirve
+# static/escaner_isbn.html. La ruta se ancla a RAIZ para no depender del
+# directorio desde el que se arranque uvicorn.
+app.mount("/scanner", StaticFiles(directory=RAIZ / "static", html=True), name="scanner")
 
 
 @app.get("/", include_in_schema=False)
