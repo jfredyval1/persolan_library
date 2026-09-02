@@ -153,6 +153,108 @@ suelta para una prueba puntual.
 
 ---
 
+## En contenedor (Docker)
+
+Alternativa a los tres pasos anteriores: el `Dockerfile` de la raíz empaqueta la
+API **y** la construcción de la base, así que no hace falta ni venv ni `sqlite3`
+en la máquina.
+
+### 1. Construir la imagen
+
+```bash
+docker build --build-arg UID=$(id -u) --build-arg GID=$(id -g) -t biblioteca:latest .
+```
+
+Son dos etapas: la primera instala las dependencias en un venv (`/opt/venv`) y
+la segunda copia solo ese venv ya montado, así que pip y su caché no llegan a la
+imagen final. `requirements.txt` se copia antes que el código —mientras no
+cambien las versiones, esa capa se reaprovecha y el build no vuelve a bajar
+nada—, y `sql/` antes que `api/`, para que tocar el código no invalide la capa
+que arrastra los 2 MB de fronteras de `03_seed_paises.sql`.
+
+### 2. Arrancar el contenedor
+
+```bash
+docker run -it -d -p 127.0.0.1:8000:8000 --name back_biblioteca \
+  -v "$PWD/datos:/datos" --env-file .env --restart unless-stopped biblioteca:latest
+```
+
+Y ya está en <http://127.0.0.1:8000/docs>, igual que arrancando a mano.
+
+| Opción | Para qué |
+|---|---|
+| `-d` | en segundo plano; la salida se mira con `docker logs`. |
+| `-it` | terminal asignada. Con `-d` no es imprescindible, pero deja la salida sin bufferizar y permite `docker attach`. |
+| `-p 127.0.0.1:8000:8000` | publica el puerto **solo en el loopback**. Sin el `127.0.0.1:` la API queda abierta a toda la red, y no tiene más defensa que la clave (ver [nota 1](#notas-importantes)). |
+| `--name back_biblioteca` | nombre fijo para `logs`, `exec`, `stop` y `start`. |
+| `-v "$PWD/datos:/datos"` | el GeoPackage vive en el host, no en el contenedor. |
+| `--env-file .env` | las claves, en tiempo de ejecución. |
+| `--restart unless-stopped` | vuelve a levantarse tras una caída o un reinicio del equipo, salvo que lo hayas parado tú. |
+
+Parar y volver a levantar, sin perder nada: `docker stop back_biblioteca` y
+`docker start back_biblioteca`. Tras cambiar el código hay que rehacer la
+imagen: el mismo `docker build` de arriba, luego `docker rm -f back_biblioteca`
+y otra vez el `docker run`. El catálogo no se va con el contenedor —está en
+`datos/`—, así que reconstruir es barato.
+
+### El `.gpkg` se queda en el host
+
+Esa es la razón de ser del montaje `-v "$PWD/datos:/datos"`: **la base no vive
+dentro del contenedor**, vive en `datos/` del host. El contenedor se puede
+borrar y reconstruir cuantas veces haga falta sin perder el catálogo, y QGIS
+puede abrir `datos/biblioteca.gpkg` mientras la API sigue sirviendo (el modo WAL
+del esquema está para eso).
+
+La base se crea **en el primer arranque**, no durante el `docker build`: en
+tiempo de build el directorio compartido todavía no existe. `docker/entrypoint.sh`
+mira si `datos/biblioteca.gpkg` está ahí y, si no, lo levanta con los cinco
+scripts de `sql/` en orden; si ya está, no lo toca. Se construye sobre un nombre
+provisional y se renombra al final, de modo que un fallo a mitad no deja una base
+incompleta que el siguiente arranque daría por buena. Si además detecta que
+`/datos` no es un volumen montado, lo avisa en el log y arranca igual.
+
+Para empezar de cero: `rm datos/biblioteca.gpkg` y reinicia el contenedor.
+
+### `UID`/`GID` en el build
+
+El contenedor escribe en un directorio del host, así que su usuario tiene que
+poder hacerlo. Los `--build-arg` de arriba crean dentro de la imagen un usuario
+con **tu** identificador; sin ellos se usa `1000:1000`, que es lo habitual para
+el primer usuario en Linux. Si el `.gpkg` no se crea y el log dice
+`unable to open database file`, es esto.
+
+`datos/` se versiona vacío (con un `.gitkeep`) a propósito: si la ruta no
+existe, Docker la crea como `root` al montar y entonces el contenedor no puede
+escribir en ella.
+
+### Variables de entorno
+
+`--env-file .env` reutiliza el mismo archivo de la sección anterior. El `.env`
+**no entra en la imagen** (está en `.dockerignore`): las claves se pasan en
+tiempo de ejecución, no horneadas en una capa. `BIBLIOTECA_GPKG` ya viene fijada
+a `/datos/biblioteca.gpkg` en el `Dockerfile`.
+
+### Comprobaciones
+
+```bash
+docker ps                                       # STATUS dice (healthy) cuando /salud responde
+docker logs -f back_biblioteca                  # arranque, creación de la base, peticiones
+docker exec -it back_biblioteca sqlite3 /datos/biblioteca.gpkg   # inspección directa
+```
+
+El `HEALTHCHECK` llama a `/salud`, que abre el GeoPackage y cuenta los libros:
+comprueba de una vez que el proceso responde y que la base sigue accesible. Da
+60 s de margen al arranque —lo que puede tardar la creación inicial— antes de
+empezar a contar fallos.
+
+> El escáner de código de barras necesita **contexto seguro** (HTTPS o
+> `localhost`), y eso no cambia dentro de un contenedor: la cámara del móvil
+> solo se abrirá si llegas a `/scanner` por un dominio con certificado.
+
+Falta el contenedor del front y el `docker-compose.yml` que orqueste los dos.
+
+---
+
 ## Cómo se cataloga
 
 ### Un libro con ISBN — el camino normal

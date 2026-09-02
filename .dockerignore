@@ -1,0 +1,36 @@
+# Todo lo que no debe entrar en la imagen del backend.
+# Regla de oro: la imagen lleva el CÓDIGO y los SCRIPTS SQL; los datos y los
+# secretos se montan o se pasan por entorno en tiempo de ejecución.
+
+# Entorno virtual del host: la imagen construye el suyo con la misma
+# requirements.txt, y copiar este rompería las rutas absolutas del venv.
+.venv/
+
+# El GeoPackage vive en el volumen compartido, nunca dentro de la imagen.
+sql/gpkg/
+datos/
+*.gpkg
+*.gpkg-wal
+*.gpkg-shm
+
+# Secretos: se pasan con --env-file o env_file, no horneados en una capa.
+.env
+
+# Herramientas de regeneración de las semillas: no hacen falta para servir.
+sql/herramientas/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.gitignore
+tests/
+README.md
+plantilla_libros.csv
+*.qmd
+.~lock.*#
+
+# El propio andamiaje de Docker no necesita viajar dentro de la imagen.
+Dockerfile
+.dockerignore
+docker-compose.yml

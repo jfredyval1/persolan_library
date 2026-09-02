@@ -21,3 +21,9 @@ tests/test_extra.py
 .env
 # Bloqueos que deja LibreOffice al abrir un CSV
 .~lock.*#
+
+# Volumen compartido con el contenedor (ver Dockerfile): aquí vive el .gpkg.
+# El directorio sí se versiona —vacío— porque un bind mount sobre una ruta que
+# no existe la crea Docker como root, y entonces el contenedor no puede escribir.
+datos/*
+!datos/.gitkeep
